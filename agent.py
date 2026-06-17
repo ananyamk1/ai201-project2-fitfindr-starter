@@ -63,7 +63,7 @@ def _parse_query(query: str) -> dict:
 
     size = None
     size_patterns = [
-        r"size\s*([a-z0-9/\-() ]{1,20})",
+        r"\bsize\s*(w\d+\s*l\d+|us\s*\d+(?:\.\d+)?|xxs|xs|s|m|l|xl|xxl|xxxl|\d{1,3}|[a-z]{1,3}\s*/\s*[a-z]{1,3})\b",
         r"\b(us\s*\d+(?:\.\d+)?)\b",
         r"\b(w\d+\s*l\d+)\b",
         r"\b(xxs|xs|s|m|l|xl|xxl|xxxl)\b",
