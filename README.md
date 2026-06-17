@@ -101,27 +101,27 @@ Here are my three tools, and these match my actual function signatures in `tools
      Walk through this carefully — it's how graders follow your agent's reasoning without a live demo.
      Use a specific example — do not leave this as a template. -->
 
-**User query:** "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
+Query: "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
 
-**Step 1 — Tool called:**
-- Tool: `search_listings`
-- Input: `description="vintage graphic tee"`, `size=None`, `max_price=30.0` — I pulled these out of the query first. I caught the "$30" as the budget and left size empty because the user never gave me one.
+Step 1 — Tool called:
+- Tool: search_listings
+- Input: description="vintage graphic tee"`, `size=None`, `max_price=30.0` — I pulled these out of the query first. I caught the "$30" as the budget and left size empty because the user never gave me one.
 - Why this tool: The user is shopping first, so before I can style anything I need a real item to work with. I think it makes no sense to suggest an outfit for something that isn't even for sale in their budget.
-- Output: A ranked list of 22 matching listings, with `lst_033` "Vintage Band Tee — Faded Grey" ($19.0, depop) first.
+- Output: A ranked list of 22 matching listings, with lst_033 "Vintage Band Tee — Faded Grey" ($19.0, depop) first.
 
-**Step 2 — Tool called:**
-- Tool: `suggest_outfit`
-- Input: `new_item=` the top result (`lst_033`), `wardrobe=get_example_wardrobe()`
+Step 2 — Tool called:
+- Tool: suggest_outfit
+- Input: new_item= the top result (lst_033=), wardrobe=get_example_wardrobe()
 - Why this tool: Now that I have a concrete item, I want to style it with what the user actually owns. I take the first result as my selected item and pass it in with their wardrobe so the outfit feels personal.
 - Output: A styling string that pairs the band tee with their baggy straight-leg jeans and chunky white sneakers, and explains why the look works together.
 
-**Step 3 — Tool called:**
-- Tool: `create_fit_card`
-- Input: `outfit=` the string from Step 2, `new_item=lst_033`
+Step 3 — Tool called:
+- Tool: create_fit_card
+- Input: outfit= the string from Step 2, new_item=lst_033
 - Why this tool: This is my final step. I take the outfit I just built and turn it into a short caption the user could actually post, mentioning the item, the $19 price, and that it's on depop.
 - Output: A 2–4 sentence casual OOTD-style caption.
 
-**Final output to user:** The user sees the top matching listing, the outfit suggestion built from their own wardrobe, and the finished fit card caption that ties it all together and points back to the listing.
+Final output to user: The user sees the top matching listing, the outfit suggestion built from their own wardrobe, and the finished fit card caption that ties it all together and points back to the listing.
 
 ---
 
@@ -189,3 +189,37 @@ I used an AI coding assistant while building this, and here are two specific tim
 3. Build and test each tool individually before connecting them through your planning loop.
 
 Your implementation files go in this same directory. There's no required file structure for your agent code — organize it however makes sense for your design.
+
+---
+
+## Stretch Features
+
+I built all four stretch features on top of the three required tools. None of them change the required happy path — they're additive. The two new tools live in `tools.py` next to the required three, the memory layer is in `memory.py`, and the retry logic is in `agent.py`. The Gradio app (`app.py`) surfaces all of them in the "Top listing found" panel, and `python agent.py` prints a dedicated demo block for each one. Tests for all four are in `tests/test_stretch.py`.
+
+### 1. Price Comparison Tool — `compare_price`
+
+- **Function:** `compare_price(new_item: dict, listings: list[dict] | None = None) -> dict`
+- **Inputs:** `new_item` (`dict`) — the selected listing to evaluate; `listings` (`list[dict] | None`) — the pool to compare against, defaulting to the full dataset.
+- **Returns:** a `dict` with `assessment` (`"great deal"` / `"fair price"` / `"priced above market"` / `"no comparison available"`), a human-readable `reasoning` string, `item_price`, `median_price`, `comparable_count`, and `price_range` (`[min, max]`).
+- **How the comparison is made:** I pull the comparable set as every other listing in the **same category** that shares **at least one style tag** with the item. If that's thinner than three matches, I fall back to all other listings in the same category so the verdict still has a real basis. I take the **median** of those comparable prices and bucket the item: `≤ 85% of median` is a great deal, within `±10%` of median is a fair price, and above that is priced above market. The reasoning string names the median, the comparable count, and the price range so the assessment is explainable, not just a label. Example from `python agent.py`: *"At $18, this is well below the $22 median of 14 comparable tops (which range $15–$35). Verdict: great deal."* The agent calls this right after it selects the top listing and stores it in `session["price_assessment"]`.
+
+### 2. Trend Awareness Tool — `get_trend_info`
+
+- **Function:** `get_trend_info(new_item: dict, trends: dict | None = None) -> dict`
+- **Inputs:** `new_item` (`dict`) — the selected listing; `trends` (`dict | None`) — the trend data, defaulting to `load_trends()`.
+- **Returns:** a `dict` with `matched_tags` (the item's style tags that had a trend note), `status` (the strongest of `hot` > `rising` > `steady`), `notes` (the matched notes), and `summary` (one combined trend line).
+- **Data source:** `data/trends.json` — a curated map of `style_tag -> {status, note}` whose keys mirror the `style_tags` used in `listings.json`, so any listing can be matched to a trend note (with a `default` fallback for unmatched tags).
+- **How it visibly influences the outfit:** the agent calls `get_trend_info` on the selected item, then passes the resulting `summary` into `suggest_outfit` as the optional `trend_context` argument. That trend text is added to the styling prompt, so the outfit leans into what's currently trending. You can see this in the `python agent.py` happy-path output — the trend line flags Y2K and cottagecore as hot/rising, and the generated outfit explicitly builds a "Cottagecore Chic" look and calls out the Y2K revival.
+- **Note on `suggest_outfit`'s signature:** to wire this in I added one **optional** parameter, `trend_context: str | None = None`, to `suggest_outfit`. It defaults to `None`, so the documented required interface (`new_item`, `wardrobe`) is unchanged — every existing call and test still works without passing it.
+
+### 3. Style Profile Memory — `memory.py`
+
+- **Storage approach:** style preferences are persisted to a small JSON file, `style_profile.json` (git-ignored, since it's per-user runtime state). The file holds a `style_tags` map of `tag -> count` plus an `interactions` counter. `memory.py` exposes `load_profile`, `save_profile`, `update_profile`, `preferred_style_tags`, and `clear_profile`.
+- **What gets stored and when:** after each interaction (when `use_memory=True`), `update_profile` increments counts for the style tags of the item the user engaged with, plus any known style words found in their query. Counts mean stronger, repeated preferences rank higher.
+- **How the second interaction uses the first without re-entry:** at the start of a run, the agent loads the profile and reads the top preferred tags via `preferred_style_tags`. It appends those remembered tags to the search description before calling `search_listings`, so prior taste biases the ranking even when the new query mentions no style words. The `python agent.py` memory demo shows this: interaction 1 is *"vintage grunge band tee under $30"*, then interaction 2 is just *"a top"* — and because `['grunge', 'vintage', 'band tee']` were remembered and applied, the agent still surfaces the Vintage Band Tee. `run_agent` takes an optional `use_memory` flag (default `False`) so the required two-argument behavior is unchanged; the Gradio app enables it.
+
+### 4. Retry Logic with Fallback
+
+- **Where it lives:** `agent._search_with_retry`, called inside `run_agent` in place of the bare `search_listings` call.
+- **What it does:** if the first `search_listings` call returns zero results, the agent automatically retries with constraints loosened one at a time — first dropping the **size** filter, then lifting the **price** ceiling, then dropping **both** (only the steps that actually apply are attempted). The moment a loosened search succeeds, the agent proceeds with those results and stores a plain-language explanation in `session["retry_notes"]`, e.g. *"Heads up: nothing under $1, so I lifted the price ceiling to find these. Adjust your filters if that's not what you wanted."*
+- **Interaction with the no-results path:** if every loosened attempt is still empty (the item genuinely isn't in the dataset, like *"designer ballgown size XXS under $5"*), the retry gives up and the agent falls through to its normal no-results error message — so the documented failure example above is unchanged. The `python agent.py` retry demo shows the successful case: *"vintage graphic tee under $1"* finds nothing under $1, the agent lifts the ceiling, explains it, and recovers a listing.

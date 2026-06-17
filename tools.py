@@ -33,7 +33,7 @@ from groq import (
     UnprocessableEntityError,
 )
 
-from utils.data_loader import load_listings
+from utils.data_loader import load_listings, load_trends
 
 load_dotenv()
 
@@ -224,7 +224,7 @@ def search_listings(
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, trend_context: str | None = None) -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
@@ -232,6 +232,10 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         new_item: A listing dict (the item the user is considering buying).
         wardrobe: A wardrobe dict with an 'items' key containing a list of
                   wardrobe item dicts. May be empty — handle this gracefully.
+        trend_context: Optional trend note (from the get_trend_info stretch tool).
+                  When provided it is added to the prompt so the suggestion can
+                  lean into what is currently trending. Defaults to None, which
+                  keeps the original (new_item, wardrobe) behavior unchanged.
 
     Returns:
         A non-empty string with outfit suggestions.
@@ -279,6 +283,12 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
             f"{item_summary}\n"
             "Wardrobe items:\n"
             + "\n".join(wardrobe_lines)
+        )
+
+    if trend_context and trend_context.strip():
+        user_prompt += (
+            "\n\nCurrent trend context (lean into this where it fits naturally):\n"
+            f"{trend_context.strip()}"
         )
 
     try:
@@ -401,3 +411,166 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         APIStatusError,
     ) as exc:  # pragma: no cover - defensive fallback for API failures
         return f"Error: the fit card could not be generated right now. Reason: {exc}"
+
+
+# ── Stretch Tool: compare_price (Price Comparison) ──────────────────────────────
+
+def _median(values: list[float]) -> float:
+    """Return the median of a non-empty list of numbers."""
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def compare_price(new_item: dict, listings: list[dict] | None = None) -> dict:
+    """
+    Assess whether a listing is well-priced compared to similar items in the
+    dataset. (Stretch feature: Price Comparison Tool.)
+
+    Comparables are other listings in the SAME category that share at least one
+    style tag with the item. If fewer than three such matches exist, the
+    comparison falls back to all other listings in the same category so the
+    assessment still has a meaningful basis.
+
+    Args:
+        new_item: The listing dict to evaluate (typically the selected item).
+        listings: The pool to compare against. Defaults to the full dataset
+                  loaded with load_listings().
+
+    Returns:
+        A dict describing the assessment:
+            {
+              "assessment": "great deal" | "fair price" | "priced above market"
+                            | "no comparison available",
+              "reasoning":  str — a human-readable explanation,
+              "item_price": float | None,
+              "median_price": float | None,
+              "comparable_count": int,
+              "price_range": [min, max] | None,
+            }
+        Never raises — returns the "no comparison available" assessment if the
+        item has no price or no comparable listings exist.
+    """
+    pool = listings if listings is not None else load_listings()
+    item_price = new_item.get("price")
+    item_id = new_item.get("id")
+    item_category = (new_item.get("category") or "").lower()
+    item_tags = {t.lower() for t in (new_item.get("style_tags") or [])}
+
+    no_comparison = {
+        "assessment": "no comparison available",
+        "reasoning": "There aren't enough similar listings to compare this item against.",
+        "item_price": item_price,
+        "median_price": None,
+        "comparable_count": 0,
+        "price_range": None,
+    }
+
+    if item_price is None:
+        return no_comparison
+
+    same_category = [
+        l for l in pool
+        if l.get("id") != item_id and (l.get("category") or "").lower() == item_category
+        and l.get("price") is not None
+    ]
+    comparables = [
+        l for l in same_category
+        if item_tags & {t.lower() for t in (l.get("style_tags") or [])}
+    ]
+    # Fall back to category-only comparison when style overlap is too thin.
+    if len(comparables) < 3:
+        comparables = same_category
+
+    if not comparables:
+        return no_comparison
+
+    prices = [l["price"] for l in comparables]
+    median_price = _median(prices)
+    low, high = min(prices), max(prices)
+
+    if item_price <= median_price * 0.85:
+        assessment = "great deal"
+        verdict = "well below"
+    elif item_price <= median_price * 1.10:
+        assessment = "fair price"
+        verdict = "right around"
+    else:
+        assessment = "priced above market"
+        verdict = "above"
+
+    reasoning = (
+        f"At ${item_price:.0f}, this is {verdict} the ${median_price:.0f} median "
+        f"of {len(comparables)} comparable {item_category or 'listing'}(s) "
+        f"(which range ${low:.0f}–${high:.0f}). Verdict: {assessment}."
+    )
+
+    return {
+        "assessment": assessment,
+        "reasoning": reasoning,
+        "item_price": item_price,
+        "median_price": median_price,
+        "comparable_count": len(comparables),
+        "price_range": [low, high],
+    }
+
+
+# ── Stretch Tool: get_trend_info (Trend Awareness) ──────────────────────────────
+
+def get_trend_info(new_item: dict, trends: dict | None = None) -> dict:
+    """
+    Look up current trend notes for a listing's style tags. (Stretch feature:
+    Trend Awareness Tool.)
+
+    Data source: data/trends.json — a curated map of style_tag -> {status, note}
+    whose tags mirror the style_tags used in the listings dataset, so any listing
+    can be matched to a trend note.
+
+    Args:
+        new_item: The listing dict whose style tags should be looked up.
+        trends:   The trend data to use. Defaults to load_trends().
+
+    Returns:
+        A dict:
+            {
+              "matched_tags": list[str],   — item tags that had a trend note
+              "status": str,               — strongest status found (hot > rising > steady)
+              "notes": list[str],          — the matched trend notes
+              "summary": str,              — a single combined trend line for prompting
+            }
+        Falls back to the data source's "default" note when no tag matches.
+    """
+    data = trends if trends is not None else load_trends()
+    trend_map = data.get("trends", {})
+    default = data.get("default", {"status": "steady", "note": ""})
+
+    item_tags = [t.lower() for t in (new_item.get("style_tags") or [])]
+    matched_tags, notes, statuses = [], [], []
+    for tag in item_tags:
+        entry = trend_map.get(tag)
+        if entry:
+            matched_tags.append(tag)
+            notes.append(entry.get("note", ""))
+            statuses.append(entry.get("status", "steady"))
+
+    if not matched_tags:
+        return {
+            "matched_tags": [],
+            "status": default.get("status", "steady"),
+            "notes": [default.get("note", "")],
+            "summary": default.get("note", ""),
+        }
+
+    rank = {"hot": 3, "rising": 2, "steady": 1}
+    top_status = max(statuses, key=lambda s: rank.get(s, 0))
+    summary = " ".join(n for n in notes if n)
+
+    return {
+        "matched_tags": matched_tags,
+        "status": top_status,
+        "notes": notes,
+        "summary": summary,
+    }

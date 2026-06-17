@@ -41,7 +41,7 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
     else:
         wardrobe = get_example_wardrobe()
 
-    session = run_agent(user_query.strip(), wardrobe)
+    session = run_agent(user_query.strip(), wardrobe, use_memory=True)
 
     if session["error"]:
         return session["error"], "", ""
@@ -57,6 +57,19 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
         f"Platform: {selected_item.get('platform', 'n/a')}\n"
         f"Brand: {selected_item.get('brand') or 'n/a'}"
     )
+
+    # ── stretch features: surface retry note, price comparison, and trend ──
+    if session.get("retry_notes"):
+        listing_text = f"⚠️ {session['retry_notes']}\n\n" + listing_text
+    if session.get("price_assessment"):
+        listing_text += f"\n\n💰 Price check: {session['price_assessment']['reasoning']}"
+    if session.get("trend_info") and session["trend_info"].get("summary"):
+        listing_text += (
+            f"\n\n📈 Trend [{session['trend_info']['status']}]: "
+            f"{session['trend_info']['summary']}"
+        )
+    if session.get("profile_applied"):
+        listing_text += f"\n\n🧠 Style memory used: {', '.join(session['profile_applied'])}"
 
     return listing_text, session["outfit_suggestion"] or "", session["fit_card"] or ""
 

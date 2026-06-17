@@ -20,7 +20,19 @@ Usage (once implemented):
 
 import re
 
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import (
+    search_listings,
+    suggest_outfit,
+    create_fit_card,
+    compare_price,
+    get_trend_info,
+)
+from memory import (
+    load_profile,
+    save_profile,
+    update_profile,
+    preferred_style_tags,
+)
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -44,6 +56,11 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "error": None,               # set if the interaction ended early
+        # ── stretch-feature fields (additive; None/empty on the happy path) ──
+        "price_assessment": None,    # dict from compare_price (Price Comparison)
+        "trend_info": None,          # dict from get_trend_info (Trend Awareness)
+        "retry_notes": None,         # str describing any loosened-search retry
+        "profile_applied": None,     # style tags from memory used to bias search
     }
 
 
@@ -103,9 +120,52 @@ def _parse_query(query: str) -> dict:
     }
 
 
+# ── retry with loosened constraints (stretch feature) ──────────────────────────
+
+def _search_with_retry(description: str, size, max_price) -> tuple[list, str | None]:
+    """
+    Run search_listings; if it returns nothing, retry with constraints loosened
+    one at a time and report what was adjusted.
+
+    Order of loosening (only steps that actually apply are attempted):
+        1. drop the size filter
+        2. drop the price ceiling
+        3. drop both
+
+    Returns:
+        (results, retry_note). retry_note is None when the first attempt already
+        succeeded; otherwise it explains which filter(s) were relaxed. If every
+        attempt is still empty, results is [] and retry_note is None so the agent
+        falls through to its normal no-results error message.
+    """
+    results = search_listings(description=description, size=size, max_price=max_price)
+    if results:
+        return results, None
+
+    attempts = []
+    if size is not None:
+        attempts.append(("size", dict(size=None, max_price=max_price),
+                         f'no exact match for size "{size}", so I dropped the size filter'))
+    if max_price is not None:
+        attempts.append(("price", dict(size=size, max_price=None),
+                         f"nothing under ${max_price:.0f}, so I lifted the price ceiling"))
+    if size is not None and max_price is not None:
+        attempts.append(("both", dict(size=None, max_price=None),
+                         f'no match for size "{size}" under ${max_price:.0f}, so I dropped both filters'))
+
+    for _label, kwargs, note in attempts:
+        loosened = search_listings(description=description, **kwargs)
+        if loosened:
+            return loosened, (
+                f"Heads up: {note} to find these. Adjust your filters if that's not what you wanted."
+            )
+
+    return [], None
+
+
 # ── planning loop ─────────────────────────────────────────────────────────────
 
-def run_agent(query: str, wardrobe: dict) -> dict:
+def run_agent(query: str, wardrobe: dict, use_memory: bool = False) -> dict:
     """
     Main agent entry point. Runs the FitFindr planning loop for a single
     user interaction and returns the completed session dict.
@@ -115,6 +175,10 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                   (e.g., "vintage graphic tee under $30, size M")
         wardrobe: User's wardrobe dict — use get_example_wardrobe() or
                   get_empty_wardrobe() from utils/data_loader.py
+        use_memory: When True, enables Style Profile Memory — the agent loads the
+                  saved profile to bias the search toward remembered preferences
+                  and updates it afterward. Defaults to False (no persistence),
+                  which keeps the original two-argument behavior unchanged.
 
     Returns:
         The session dict after the interaction completes. Check session["error"]
@@ -155,12 +219,30 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     parsed = _parse_query(query)
     session["parsed"] = parsed
 
-    search_results = search_listings(
-        description=parsed["description"],
+    # ── Style Profile Memory (stretch): bias the search toward tags the user has
+    #    gravitated to before, without making them re-type those preferences.
+    profile = None
+    search_description = parsed["description"]
+    if use_memory:
+        profile = load_profile()
+        preferred = preferred_style_tags(profile)
+        if preferred:
+            session["profile_applied"] = preferred
+            # Append remembered preferences to the search text so prior taste
+            # influences ranking without the user re-entering anything.
+            extra = " ".join(t for t in preferred if t not in search_description.lower())
+            if extra:
+                search_description = f"{search_description} {extra}".strip()
+
+    # ── search_listings, with automatic retry on zero results (stretch:
+    #    retry-with-fallback). retry_note explains any loosening to the user.
+    search_results, retry_note = _search_with_retry(
+        description=search_description,
         size=parsed["size"],
         max_price=parsed["max_price"],
     )
     session["search_results"] = search_results
+    session["retry_notes"] = retry_note
 
     if not search_results:
         session["error"] = (
@@ -169,16 +251,34 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             + (f' under ${parsed["max_price"]:.0f}' if parsed["max_price"] is not None else "")
             + ". Try loosening the filters."
         )
+        # Still learn from the query text even when the search failed.
+        if use_memory and profile is not None:
+            update_profile(profile, None, parsed)
+            save_profile(profile)
         return session
 
     top_result = search_results[0]
     session["selected_item"] = top_result
 
-    outfit_suggestion = suggest_outfit(top_result, wardrobe)
+    # ── Price Comparison (stretch): assess the selected item against comparables.
+    session["price_assessment"] = compare_price(top_result)
+
+    # ── Trend Awareness (stretch): look up trend notes for the item's style and
+    #    feed them into suggest_outfit so the suggestion visibly leans into them.
+    trend_info = get_trend_info(top_result)
+    session["trend_info"] = trend_info
+    trend_context = (trend_info or {}).get("summary")
+
+    outfit_suggestion = suggest_outfit(top_result, wardrobe, trend_context=trend_context)
     session["outfit_suggestion"] = outfit_suggestion
 
     fit_card = create_fit_card(outfit_suggestion, top_result)
     session["fit_card"] = fit_card
+
+    # ── persist learned style preferences for the next interaction.
+    if use_memory and profile is not None:
+        update_profile(profile, top_result, parsed)
+        save_profile(profile)
 
     return session
 
@@ -187,6 +287,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
 if __name__ == "__main__":
     from utils.data_loader import get_example_wardrobe
+    from memory import clear_profile
 
     print("=== Happy path: graphic tee ===\n")
     result = run_agent(
@@ -202,6 +303,10 @@ if __name__ == "__main__":
             print(f"Found: {title}")
         else:
             print("Found: <no listing returned>")
+        if result["price_assessment"]:
+            print(f"\nPrice check: {result['price_assessment']['reasoning']}")
+        if result["trend_info"]:
+            print(f"Trend: [{result['trend_info']['status']}] {result['trend_info']['summary']}")
         print(f"\nOutfit: {result['outfit_suggestion']}")
         print(f"\nFit card: {result['fit_card']}")
 
@@ -211,3 +316,34 @@ if __name__ == "__main__":
         wardrobe=get_example_wardrobe(),
     )
     print(f"Error message: {result2['error']}")
+
+    print("\n\n=== Stretch: retry with loosened constraints ===\n")
+    # An impossible budget on a real item → the agent lifts the price ceiling
+    # and explains the adjustment instead of returning nothing.
+    result3 = run_agent(
+        query="vintage graphic tee under $1",
+        wardrobe=get_example_wardrobe(),
+    )
+    print(f"Retry note: {result3['retry_notes']}")
+    if result3["selected_item"]:
+        print(f"Recovered listing: {result3['selected_item'].get('title')}")
+
+    print("\n\n=== Stretch: Style Profile Memory across two interactions ===\n")
+    clear_profile()  # start the demo from a clean slate
+    first = run_agent(
+        query="vintage grunge band tee under $30",
+        wardrobe=get_example_wardrobe(),
+        use_memory=True,
+    )
+    print(f"Interaction 1 query mentions: vintage grunge band tee")
+    print(f"Interaction 1 picked: {first['selected_item'].get('title') if first['selected_item'] else None}")
+
+    second = run_agent(
+        query="a top",                       # no style words re-entered here
+        wardrobe=get_example_wardrobe(),
+        use_memory=True,
+    )
+    print(f"\nInteraction 2 query: 'a top' (no style preferences re-entered)")
+    print(f"Profile applied to search: {second['profile_applied']}")
+    print(f"Interaction 2 picked: {second['selected_item'].get('title') if second['selected_item'] else None}")
+    clear_profile()  # clean up demo state

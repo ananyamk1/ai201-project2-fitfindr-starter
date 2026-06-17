@@ -1,0 +1,60 @@
+{
+  "_meta": {
+    "description": "Curated secondhand-fashion trend notes keyed by style tag. This is the data source for the get_trend_info tool. Tags mirror the style_tags used in listings.json so any listing can be matched to a trend note.",
+    "season": "2026 spring/summer"
+  },
+  "trends": {
+    "vintage": {
+      "status": "hot",
+      "note": "Vintage pieces are peaking right now — true-to-era cuts and natural fading read as the most authentic look this season."
+    },
+    "y2k": {
+      "status": "hot",
+      "note": "Y2K is still surging: low-rise bottoms, baby tees, and shiny fabrics are everywhere on resale right now."
+    },
+    "90s": {
+      "status": "rising",
+      "note": "90s minimalism and slip silhouettes are climbing — pair clean lines with chunky accessories for the current take."
+    },
+    "grunge": {
+      "status": "rising",
+      "note": "Grunge is back in rotation: layered flannels, band tees, and combat boots are trending for an effortless undone vibe."
+    },
+    "streetwear": {
+      "status": "steady",
+      "note": "Streetwear stays strong — oversized fits and graphic pieces remain a reliable resale staple."
+    },
+    "cottagecore": {
+      "status": "rising",
+      "note": "Cottagecore is having a soft-girl revival: florals, linen, and crochet are trending into warmer months."
+    },
+    "graphic tee": {
+      "status": "hot",
+      "note": "Graphic and band tees are a top resale search this season — worn-in prints sell fastest."
+    },
+    "band tee": {
+      "status": "hot",
+      "note": "Authentic band tees are a coveted resale category right now; faded originals command the most attention."
+    },
+    "denim": {
+      "status": "steady",
+      "note": "Denim is evergreen, but baggy and straight-leg cuts are leading over skinny fits this season."
+    },
+    "athletic": {
+      "status": "rising",
+      "note": "Sporty 2000s-era track and warm-up pieces are trending as everyday wear."
+    },
+    "minimal": {
+      "status": "steady",
+      "note": "Quiet, minimal basics stay in demand for capsule-wardrobe shoppers."
+    },
+    "earth tones": {
+      "status": "rising",
+      "note": "Earth-tone palettes are trending for the season — browns, olives, and rust mix easily into existing wardrobes."
+    }
+  },
+  "default": {
+    "status": "steady",
+    "note": "Secondhand staples in good condition are always in demand — focus on fit and versatility."
+  }
+}

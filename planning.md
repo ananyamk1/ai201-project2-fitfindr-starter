@@ -79,6 +79,32 @@ If the outfit data is incomplete, the agent still returns a partial card for the
 
 <!-- Copy the block above for any tools beyond the required three -->
 
+These are the stretch-feature tools I added beyond the required three. (See the Stretch Features section of the README for full write-ups.)
+
+#### Stretch Tool A: compare_price (Price Comparison)
+
+**What it does:** Assesses whether the selected listing is well-priced relative to comparable items in the dataset.
+
+**Input parameters:**
+- `new_item` (dict): the selected listing to evaluate.
+- `listings` (list[dict] | None): the comparison pool, defaulting to the full dataset.
+
+**What it returns:** A dict with `assessment` ("great deal" / "fair price" / "priced above market" / "no comparison available"), a `reasoning` string, `item_price`, `median_price`, `comparable_count`, and `price_range`. Comparables are other listings in the same category sharing at least one style tag (falling back to category-only when fewer than three match); the item is bucketed against the median of those comparables.
+
+**What happens if it fails or returns nothing:** If the item has no price or there are no comparables, it returns the "no comparison available" assessment instead of raising.
+
+#### Stretch Tool B: get_trend_info (Trend Awareness)
+
+**What it does:** Looks up current trend notes for the selected listing's style tags so the outfit can lean into what's trending.
+
+**Input parameters:**
+- `new_item` (dict): the selected listing.
+- `trends` (dict | None): the trend data, defaulting to `load_trends()` (data source: `data/trends.json`).
+
+**What it returns:** A dict with `matched_tags`, `status` (strongest of hot > rising > steady), `notes`, and a combined `summary`. The agent passes the `summary` into `suggest_outfit` via its optional `trend_context` argument so the suggestion visibly reflects the trend.
+
+**What happens if it fails or returns nothing:** If no style tag matches, it returns the data source's `default` trend note rather than an empty result.
+
 ---
 
 ## Planning Loop

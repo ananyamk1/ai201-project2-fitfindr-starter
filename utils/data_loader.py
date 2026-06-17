@@ -61,6 +61,19 @@ def get_example_wardrobe() -> dict:
     return schema["example_wardrobe"]
 
 
+def load_trends() -> dict:
+    """
+    Load the curated trend notes used by the get_trend_info stretch tool.
+
+    Returns:
+        A dict with a "trends" map (style_tag -> {status, note}) and a
+        "default" fallback entry for tags that have no specific note.
+    """
+    path = os.path.join(_DATA_DIR, "trends.json")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def get_empty_wardrobe() -> dict:
     """
     Convenience function — returns an empty wardrobe template.
