@@ -141,12 +141,16 @@ Write out what a full user interaction looks like from start to finish — tool 
 
 **Step 1:**
 <!-- What does the agent do first? Which tool is called? With what input? -->
+opens user query to match against listings as per search_listings. Agent will search through all listings matching here and filter against available fields. Tool called is search_listings() with this inputs - search_listings(description="vintage graphic tee", max_price=30.0)
 
 **Step 2:**
 <!-- What happens next? What was returned from step 1? What tool is called now? -->
+Returns from step 1, the top result sorted, by relevence matching the listing to input: "Vintage Band Tee- Faded Grey, $19.00, Depop, fair condition". Next goes to suggest_outfit(), with input: suggest_outfit(new_item=<lst_006>, wardrobe=<user's wardrobe>)
 
 **Step 3:**
 <!-- Continue until the full interaction is complete -->
+suggest_outfit() returns outfit(grey tee+baggy jeans), Next tool called by agent is create_fit_card() with input: create_fit_card(outfit=<suggestion>, new_item=<lst_006>)
 
 **Final output to user:**
 <!-- What does the user actually see at the end? -->
+User sees ranked search results, highlighted best match with full details, styled outfit card with styling rationale, and link to purchase on Depop(or whichever source)

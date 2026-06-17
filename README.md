@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 Set your Groq API key in a `.env` file (get a free key at [console.groq.com](https://console.groq.com)):
 ```
-GROQ_API_KEY=your_key_here
+GROQ_API_KEY=your_api_key_here
 ```
 
 ## The Mock Listings Dataset
