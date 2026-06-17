@@ -75,8 +75,8 @@ def build_interface():
     with gr.Blocks(title="FitFindr") as interface:
         gr.Markdown("""
 # FitFindr 🛍️
-Find secondhand pieces and get outfit ideas based on your wardrobe.
-Describe what you're looking for — include size and price if you want to filter.
+Hey! This is Ananya's version of FitFindr where you find secondhand pieces and get outfit ideas based on your wardrobe!
+Describe what you're looking for, include size and price if you want to filter too!
         """)
 
         with gr.Row():
